@@ -14,7 +14,7 @@
  *   BAD    → ~30–50% 409s, many wasted round-trips
  *   ATOMIC → 0% 409s, 422s only when stock genuinely runs out
  *
- * Interview talking point:
+ * Key point:
  *  "Optimistic locking is right for low-contention. For hot rows like
  *   a flash-sale stock counter, an atomic UPDATE WHERE qty >= :qty is
  *   simpler, eliminates retries, and has lower tail latency."

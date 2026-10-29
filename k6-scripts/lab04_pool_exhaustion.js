@@ -10,7 +10,7 @@
  * Fix: in application.yml increase maximum-pool-size to match your VU count
  * (but remember: pods × pool_size < max_connections on MySQL).
  *
- * Interview talking point:
+ * Key point:
  *  "I'd increase the pool, but first profile whether transactions are
  *   long-running. A slow transaction holds a connection longer than needed."
  */

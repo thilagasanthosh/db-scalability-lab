@@ -61,6 +61,6 @@ export function handleSummary(data) {
   console.log(`p95 latency     : ${data.metrics.http_req_duration.values['p(95)'].toFixed(0)} ms`);
   console.log(`Connection fails: ${data.metrics.connection_refused?.values.count || 0}`);
   console.log('Check mysql_global_status_threads_connected in Grafana');
-  console.log('Interview: "pods × pool_size must stay < max_connections on MySQL"');
+  console.log('Rule: pods × pool_size must stay < max_connections on MySQL');
   return {};
 }

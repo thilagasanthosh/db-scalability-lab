@@ -7,7 +7,7 @@
  * Deep OFFSET (page=100, size=20 → OFFSET 2000) on 5M rows is very slow.
  * Keyset stays constant regardless of position.
  *
- * Interview talking point:
+ * Key point:
  *  "OFFSET n scans and discards n rows. Keyset uses the last seen ID as a
  *   WHERE clause, so the index seek is always at the same cost."
  */
