@@ -1,0 +1,167 @@
+version: "3.9"
+
+# =============================================================================
+# FULL LAB STACK
+#   mysql-primary   — port 3306  (write)
+#   mysql-replica   — port 3307  (read)
+#   redis           — port 6379
+#   kafka + zookeeper
+#   proxysql        — port 6033  (connection proxy, Lab #10)
+#   prometheus      — port 9090
+#   grafana         — port 3000
+#   mysqld-exporter — port 9104
+# =============================================================================
+
+networks:
+  lab:
+    driver: bridge
+
+volumes:
+  mysql-primary-data:
+  mysql-replica-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+
+services:
+
+  # ── MySQL Primary ───────────────────────────────────────────────────────────
+  mysql-primary:
+    image: mysql:8.0
+    container_name: mysql-primary
+    networks: [lab]
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: scalabilitylab
+    volumes:
+      - mysql-primary-data:/var/lib/mysql
+      - ./mysql/primary.cnf:/etc/mysql/conf.d/primary.cnf:ro
+      - ../sql:/docker-entrypoint-initdb.d:ro   # auto-runs 01_schema.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── MySQL Replica ───────────────────────────────────────────────────────────
+  mysql-replica:
+    image: mysql:8.0
+    container_name: mysql-replica
+    networks: [lab]
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: scalabilitylab
+    volumes:
+      - mysql-replica-data:/var/lib/mysql
+      - ./mysql/replica.cnf:/etc/mysql/conf.d/replica.cnf:ro
+      - ./mysql/replica-init.sh:/docker-entrypoint-initdb.d/replica-init.sh:ro
+    depends_on:
+      mysql-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    networks: [lab]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--maxmemory", "256mb",
+              "--maxmemory-policy", "allkeys-lru"]
+
+  # ── Zookeeper (Kafka dependency) ─────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    networks: [lab]
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  # ── Kafka ─────────────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    networks: [lab]
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on: [zookeeper]
+
+  # ── ProxySQL (Lab #10: connection pooling proxy) ────────────────────────────
+  proxysql:
+    image: proxysql/proxysql:2.5.5
+    container_name: proxysql
+    networks: [lab]
+    ports:
+      - "6033:6033"   # MySQL wire protocol
+      - "6032:6032"   # ProxySQL admin
+    volumes:
+      - ./proxysql/proxysql.cnf:/etc/proxysql.cnf:ro
+    depends_on:
+      mysql-primary:
+        condition: service_healthy
+
+  # ── mysqld-exporter ─────────────────────────────────────────────────────────
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    container_name: mysqld-exporter
+    networks: [lab]
+    ports:
+      - "9104:9104"
+    environment:
+      DATA_SOURCE_NAME: "root:root@(mysql-primary:3306)/scalabilitylab"
+    depends_on:
+      mysql-primary:
+        condition: service_healthy
+    command:
+      - --collect.info_schema.innodb_metrics
+      - --collect.info_schema.tables
+      - --collect.perf_schema.eventsstatements
+      - --collect.perf_schema.replication_applier_status_by_worker
+
+  # ── Prometheus ───────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    networks: [lab]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+
+  # ── Grafana ──────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: grafana
+    networks: [lab]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on: [prometheus]

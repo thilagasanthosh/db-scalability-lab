@@ -1,0 +1,9 @@
+# Profile: redis
+# Activate with: -Dspring.profiles.active=redis
+# Or in Docker Compose: SPRING_PROFILES_ACTIVE=redis
+#
+# Switches the cache layer from simple in-memory to Redis.
+# Enables Lab #6 caching scenarios.
+spring:
+  cache:
+    type: redis

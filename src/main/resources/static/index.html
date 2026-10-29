@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DB Scalability Lab</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* ── Tokens ──────────────────────────────────────────────────────────────────── */
+:root {
+  --bg:      #0d1117; --bg2: #161b22; --bg3: #21262d;
+  --border:  #30363d; --fg: #e6edf3; --fg2: #8b949e; --fg3: #484f58;
+  --accent:  #3fb950; --warn: #d29922; --danger: #f85149; --info: #58a6ff;
+  --good:    #3fb950; --bad: #f85149;
+  --code-bg: #161b22; --pill: rgba(63,185,80,.13);
+  --mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --ui:   'Inter', system-ui, sans-serif;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #fff; --bg2: #f6f8fa; --bg3: #eaeef2;
+    --border: #d0d7de; --fg: #1f2328; --fg2: #656d76; --fg3: #9198a1;
+    --accent: #1a7f37; --warn: #9a6700; --danger: #d1242f; --info: #0969da;
+    --good: #1a7f37; --bad: #d1242f; --code-bg: #f6f8fa;
+    --pill: rgba(26,127,55,.1);
+    color-scheme: light;
+  }
+}
+/* ── Reset + shell ───────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: var(--ui); background: var(--bg); color: var(--fg);
+             font-size: 14px; line-height: 1.6; }
+.shell { display: flex; height: 100%; overflow: hidden; }
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────────── */
+.sidebar { width: 218px; min-width: 218px; background: var(--bg2);
+           border-right: 1px solid var(--border); display: flex;
+           flex-direction: column; overflow-y: auto; padding-bottom: 24px; }
+.logo { padding: 16px; font-family: var(--mono); font-weight: 600; font-size: 13px;
+        color: var(--accent); display: flex; align-items: center; gap: 8px;
+        border-bottom: 1px solid var(--border); }
+.status-bar { display: flex; align-items: center; gap: 6px; padding: 8px 16px;
+              font-size: 11px; border-bottom: 1px solid var(--border); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg3); flex-shrink: 0; }
+.dot.ok { background: var(--good); box-shadow: 0 0 4px var(--good); }
+.dot.warn { background: var(--warn); }
+.slbl { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+        color: var(--fg3); padding: 8px 16px 3px; }
+.nb { display: flex; align-items: center; gap: 7px; padding: 6px 16px;
+      border: none; background: none; color: var(--fg2); font-family: var(--ui);
+      font-size: 13px; cursor: pointer; text-align: left; width: 100%;
+      transition: background .1s, color .1s; }
+.nb:hover { background: var(--bg3); color: var(--fg); }
+.nb.active { background: var(--pill); color: var(--accent); font-weight: 600; }
+.nb .badge { margin-left: auto; font-size: 10px; font-weight: 700;
+             font-family: var(--mono); padding: 1px 5px; border-radius: 4px;
+             background: var(--bg3); color: var(--fg3); }
+.nb.active .badge { background: var(--pill); color: var(--accent); }
+
+/* ── Main ────────────────────────────────────────────────────────────────────── */
+.main { flex: 1; min-width: 0; overflow-y: auto; padding: 24px; }
+.panel { display: none; animation: fadeIn .15s ease; }
+.panel.active { display: block; }
+@keyframes fadeIn { from { opacity: .5; } to { opacity: 1; } }
+
+/* ── Page header ─────────────────────────────────────────────────────────────── */
+.ph { margin-bottom: 24px; }
+.ph h1 { font-size: 20px; font-weight: 700; }
+.ph p  { color: var(--fg2); font-size: 13px; margin-top: 3px; }
+
+/* ── Lab grid ────────────────────────────────────────────────────────────────── */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; }
+.lc { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 15px; cursor: pointer; transition: border-color .15s;
+      position: relative; overflow: hidden; }
+.lc:hover { border-color: var(--accent); }
+.lc::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
+.lc.query::before { background: var(--good); }
+.lc.app::before   { background: var(--info); }
+.lc.infra::before { background: var(--warn); }
+.lc.data::before  { background: var(--danger); }
+.lnum { font-family: var(--mono); font-size: 10px; color: var(--fg3); margin-bottom: 4px; }
+.lt   { font-size: 14px; font-weight: 600; margin-bottom: 5px; }
+.ld   { font-size: 12px; color: var(--fg2); line-height: 1.5; margin-bottom: 10px; }
+.mr   { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.m    { font-family: var(--mono); font-size: 11px; padding: 2px 8px;
+        border-radius: 20px; }
+.m.b  { color: var(--bad);  background: rgba(248,81,73,.1); }
+.m.g  { color: var(--good); background: rgba(63,185,80,.1); }
+.arr  { color: var(--fg3); font-size: 10px; }
+
+/* ── Card ────────────────────────────────────────────────────────────────────── */
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+        padding: 16px; margin-bottom: 14px; }
+.ct { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+      color: var(--fg2); margin-bottom: 12px; }
+
+/* ── Pre / code ──────────────────────────────────────────────────────────────── */
+pre, code { font-family: var(--mono); font-size: 12px; }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 14px 16px; overflow-x: auto; line-height: 1.75; }
+.kw { color: #ff7b72; } .str { color: #a5d6ff; } .cm { color: var(--fg3); font-style: italic; }
+.fn { color: #d2a8ff; } .num { color: #79c0ff; } .ann { color: #ffa657; }
+
+/* ── Steps ───────────────────────────────────────────────────────────────────── */
+.steps { list-style: none; }
+.steps li { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0;
+            border-bottom: 1px solid var(--border); font-size: 13px; }
+.steps li:last-child { border-bottom: none; }
+.sn { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--accent);
+      background: var(--pill); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; margin-top: 2px; }
+
+/* ── Live test ───────────────────────────────────────────────────────────────── */
+.live-test { border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+             margin-bottom: 14px; }
+.lt-header { background: var(--bg3); padding: 10px 14px; display: flex; align-items: center;
+             gap: 8px; border-bottom: 1px solid var(--border); }
+.lt-title { font-weight: 600; font-size: 13px; flex: 1; }
+.run-btn { background: var(--accent); color: #fff; border: none; border-radius: 5px;
+           padding: 5px 14px; font-family: var(--ui); font-size: 12px; font-weight: 600;
+           cursor: pointer; transition: opacity .15s; }
+.run-btn:hover { opacity: .85; }
+.run-btn:disabled { opacity: .5; cursor: not-allowed; }
+.lt-body { padding: 14px; }
+.compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.result-box { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+.result-label { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                letter-spacing: .06em; margin-bottom: 6px; }
+.result-label.bad  { color: var(--bad);  }
+.result-label.good { color: var(--good); }
+.result-time { font-family: var(--mono); font-size: 22px; font-weight: 600; margin-bottom: 4px; }
+.result-time.bad  { color: var(--bad);  }
+.result-time.good { color: var(--good); }
+.result-meta { font-size: 11px; color: var(--fg2); margin-bottom: 8px; }
+.result-json { font-family: var(--mono); font-size: 11px; color: var(--fg2);
+               background: var(--code-bg); border: 1px solid var(--border);
+               border-radius: 4px; padding: 8px; max-height: 120px; overflow-y: auto;
+               white-space: pre; display: none; }
+.toggle-json { font-size: 11px; color: var(--info); background: none; border: none;
+               cursor: pointer; padding: 0; text-decoration: underline; }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--fg3);
+           border-top-color: var(--accent); border-radius: 50%;
+           animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.placeholder { color: var(--fg3); font-size: 12px; font-style: italic; }
+
+/* ── Command block ───────────────────────────────────────────────────────────── */
+.cb { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      overflow: hidden; margin-bottom: 10px; }
+.cb-hd { background: var(--bg3); padding: 5px 12px; border-bottom: 1px solid var(--border);
+          font-family: var(--mono); font-size: 11px; color: var(--fg3); }
+.cb-bd { padding: 10px 14px; }
+.cl { font-family: var(--mono); font-size: 12px; color: var(--fg); line-height: 1.7; }
+.ps { color: var(--accent); user-select: none; margin-right: 6px; }
+.cmt { color: var(--fg3); }
+
+/* ── Interview quote ─────────────────────────────────────────────────────────── */
+.iq { background: var(--bg2); border: 1px solid var(--border);
+      border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
+      padding: 12px 14px; margin-top: 14px; }
+.iq .tag { font-size: 10px; font-weight: 700; text-transform: uppercase;
+           letter-spacing: .08em; color: var(--accent); margin-bottom: 5px; }
+.iq p { font-size: 13px; font-style: italic; line-height: 1.6; }
+
+/* ── Two col ─────────────────────────────────────────────────────────────────── */
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 700px) { .two { grid-template-columns: 1fr; }
+  .compare-grid { grid-template-columns: 1fr; }
+  .sidebar { display: none; } }
+
+/* ── Table ───────────────────────────────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { background: var(--bg3); padding: 7px 12px; text-align: left; font-size: 11px;
+     font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+     color: var(--fg2); border-bottom: 1px solid var(--border); }
+td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+.gv { color: var(--good); font-family: var(--mono); font-weight: 600; }
+.bv { color: var(--bad);  font-family: var(--mono); }
+
+/* ── Phases ──────────────────────────────────────────────────────────────────── */
+.phases { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.phase { display: flex; align-items: center; gap: 5px; padding: 4px 12px;
+         border-radius: 20px; font-size: 12px; font-weight: 600;
+         border: 1px solid; }
+.phase.q { color: var(--good); background: rgba(63,185,80,.1); border-color: rgba(63,185,80,.3); }
+.phase.a { color: var(--info); background: rgba(88,166,255,.1); border-color: rgba(88,166,255,.3); }
+.phase.i { color: var(--warn); background: rgba(210,153,34,.1); border-color: rgba(210,153,34,.3); }
+.phase.d { color: var(--danger); background: rgba(248,81,73,.1); border-color: rgba(248,81,73,.3); }
+
+/* ── Back ────────────────────────────────────────────────────────────────────── */
+.back { border: none; background: none; color: var(--fg2); cursor: pointer;
+        font-family: var(--ui); font-size: 13px; padding: 0; margin-bottom: 18px;
+        display: flex; align-items: center; gap: 5px; }
+.back:hover { color: var(--fg); }
+
+/* ── Seed status ─────────────────────────────────────────────────────────────── */
+.seed-row { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 4px; }
+.sc { text-align: center; }
+.sc .n { font-family: var(--mono); font-size: 20px; font-weight: 700; color: var(--accent); }
+.sc .l { font-size: 11px; color: var(--fg3); margin-top: 1px; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ── Sidebar ──────────────────────────────────────────────────────────── -->
+<aside class="sidebar">
+  <div class="logo">
+    <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+      <rect x="1" y="2" width="13" height="3" rx="1.5" fill="currentColor" opacity=".9"/>
+      <rect x="1" y="6" width="13" height="3" rx="1.5" fill="currentColor" opacity=".6"/>
+      <rect x="1" y="10" width="13" height="3" rx="1.5" fill="currentColor" opacity=".3"/>
+    </svg>DB Scale Lab
+  </div>
+  <div class="status-bar">
+    <div class="dot" id="db-dot"></div>
+    <span id="db-status" style="color:var(--fg3);font-size:11px">checking...</span>
+  </div>
+  <div class="slbl">Start here</div>
+  <button class="nb active" data-p="overview">🗺 Overview</button>
+  <button class="nb" data-p="setup">⚙ Setup</button>
+  <button class="nb" data-p="interview">🎯 Interview Guide</button>
+  <a class="nb" href="/swagger-ui.html" target="_blank" style="text-decoration:none">
+    📄 Swagger UI <span style="margin-left:auto;font-size:10px;opacity:.5">↗</span>
+  </a>
+  <a class="nb" href="/v3/api-docs" target="_blank" style="text-decoration:none">
+    {} OpenAPI JSON <span style="margin-left:auto;font-size:10px;opacity:.5">↗</span>
+  </a>
+  <div class="slbl">Query Layer</div>
+  <button class="nb" data-p="l01">01 Index Impact <span class="badge">Q</span></button>
+  <button class="nb" data-p="l02">02 N+1 Queries  <span class="badge">Q</span></button>
+  <button class="nb" data-p="l03">03 Pagination   <span class="badge">Q</span></button>
+  <div class="slbl">App Layer</div>
+  <button class="nb" data-p="l04">04 Pool Exhaustion <span class="badge">A</span></button>
+  <button class="nb" data-p="l05">05 Batch Writes    <span class="badge">A</span></button>
+  <button class="nb" data-p="l06">06 Redis Cache     <span class="badge">A</span></button>
+  <div class="slbl">Infra Layer</div>
+  <button class="nb" data-p="l07">07 Read Replica    <span class="badge">I</span></button>
+  <button class="nb" data-p="l08">08 Lock Contention <span class="badge">I</span></button>
+  <button class="nb" data-p="l10">10 HPA Bomb        <span class="badge">★</span></button>
+  <div class="slbl">Data Layer</div>
+  <button class="nb" data-p="l09">09 Partitioning <span class="badge">D</span></button>
+  <button class="nb" data-p="l11">11 Async Writes  <span class="badge">D</span></button>
+</aside>
+
+<!-- ── Main ─────────────────────────────────────────────────────────────── -->
+<main class="main">
+
+<!-- OVERVIEW ──────────────────────────────────────────────────────────────── -->
+<div class="panel active" id="panel-overview">
+  <div class="ph">
+    <h1>Database Scalability Lab</h1>
+    <p>Running on this server · 500 customers · 50,000 orders · Spring Boot 3 + MySQL 8</p>
+  </div>
+  <div id="seed-status" style="margin-bottom:20px">
+    <div class="card" style="padding:12px 16px">
+      <div class="ct">Seed Status</div>
+      <div class="seed-row" id="seed-counts">
+        <div class="sc"><div class="n">…</div><div class="l">customers</div></div>
+        <div class="sc"><div class="n">…</div><div class="l">orders</div></div>
+        <div class="sc"><div class="n">…</div><div class="l">order items</div></div>
+        <div class="sc"><div class="n">…</div><div class="l">products</div></div>
+      </div>
+      <div id="index-tip" style="margin-top:10px;font-size:12px;color:var(--fg3)">Checking index status...</div>
+    </div>
+  </div>
+  <div class="phases">
+    <span class="phase q">① Query</span>
+    <span class="phase a">② Application</span>
+    <span class="phase i">③ Infrastructure</span>
+    <span class="phase d">④ Data</span>
+  </div>
+  <div class="grid" id="lab-grid"></div>
+</div>
+
+<!-- SETUP ─────────────────────────────────────────────────────────────────── -->
+<div class="panel" id="panel-setup">
+  <div class="ph"><h1>Setup</h1><p>Three ways to run — pick the one that matches your setup</p></div>
+  <div class="card">
+    <div class="ct">Option A — Docker Compose (recommended)</div>
+    <div class="cb"><div class="cb-hd">🐳 Starts MySQL + Redis + App + Grafana</div>
+    <div class="cb-bd">
+      <div class="cl"><span class="ps">$</span>docker compose -f docker-compose-lab.yml up --build</div>
+      <div class="cl" style="color:var(--fg3);margin-top:4px"># Opens the lab guide at http://localhost:8080 automatically</div>
+    </div></div>
+    <table style="margin-top:12px">
+      <tr><th>Service</th><th>URL</th><th>Notes</th></tr>
+      <tr><td>Lab Guide</td><td class="gv">localhost:8080</td><td>This page</td></tr>
+      <tr><td>Grafana</td><td class="gv">localhost:3000</td><td>admin / admin</td></tr>
+      <tr><td>Prometheus</td><td class="gv">localhost:9090</td><td>—</td></tr>
+      <tr><td>MySQL</td><td class="gv">localhost:3306</td><td>root / root</td></tr>
+      <tr><td>Redis</td><td class="gv">localhost:6379</td><td>—</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="ct">Option B — Local MySQL you already have</div>
+    <div class="cb"><div class="cb-hd">🖥 Terminal</div>
+    <div class="cb-bd">
+      <div class="cl"><span class="ps">$</span>mysql -uroot -p -e "CREATE DATABASE scalabilitylab CHARACTER SET utf8mb4"</div>
+      <div class="cl"><span class="ps">$</span>cd db-scalability-lab</div>
+      <div class="cl"><span class="ps">$</span>mvn spring-boot:run <span class="cmt">  # seeds data automatically on first start</span></div>
+    </div></div>
+  </div>
+  <div class="card">
+    <div class="ct">Lab #6 Redis caching — activate separately</div>
+    <div class="cb"><div class="cb-hd">Activate Redis profile</div>
+    <div class="cb-bd">
+      <div class="cl"><span class="ps">$</span>mvn spring-boot:run -Dspring-boot.run.profiles=redis</div>
+      <div class="cl" style="color:var(--fg3);margin-top:4px"># Or set SPRING_PROFILES_ACTIVE=redis in docker-compose-lab.yml (already done)</div>
+    </div></div>
+  </div>
+  <div class="card">
+    <div class="ct">k6 — install and run a lab</div>
+    <div class="cb"><div class="cb-hd">macOS</div>
+    <div class="cb-bd">
+      <div class="cl"><span class="ps">$</span>brew install k6</div>
+      <div class="cl"><span class="ps">$</span>k6 run k6-scripts/lab01_index.js --env ENDPOINT=bad</div>
+    </div></div>
+  </div>
+</div>
+
+<!-- INTERVIEW ──────────────────────────────────────────────────────────────── -->
+<div class="panel" id="panel-interview">
+  <div class="ph"><h1>Interview Guide</h1><p>The answer template · key phrases · fix order</p></div>
+  <div class="card">
+    <div class="ct">Always open with this</div>
+    <div class="iq" style="margin-top:0">
+      <div class="tag">Opening</div>
+      <p>"I'd prove it's the database first — check p99 latency, the slow query log, and HikariCP pending connections. Then I fix the cheapest layer that moves p99, not the most impressive one."</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="ct">Fix in order of cost — never jump to sharding first</div>
+    <ul class="steps">
+      <li><span class="sn">1</span><div><strong>Query level</strong> — EXPLAIN, composite indexes, fix N+1 with JOIN FETCH, replace OFFSET pagination with keyset. Zero infra cost.</div></li>
+      <li><span class="sn">2</span><div><strong>Application level</strong> — HikariCP pool size, rewriteBatchedStatements, short transactions, Redis @Cacheable.</div></li>
+      <li><span class="sn">3</span><div><strong>Infrastructure level</strong> — vertical scale, read replicas via AbstractRoutingDataSource, ProxySQL to cap connections.</div></li>
+      <li><span class="sn">4</span><div><strong>Data level</strong> — RANGE partitioning, archival, async CQRS. Sharding only when one node truly can't hold the data.</div></li>
+    </ul>
+  </div>
+  <div class="card">
+    <div class="ct">Phrases that show depth</div>
+    <table>
+      <tr><th>Topic</th><th>What to say</th></tr>
+      <tr><td>Indexes</td><td><em>"EXPLAIN showed type=ALL, 50K rows examined. Composite index on (customer_id, status, created_at) → type=ref, ~10 rows, p95 from 800ms to 8ms."</em></td></tr>
+      <tr><td>N+1</td><td><em>"Lazy loading sent N+1 queries per page. JOIN FETCH collapsed it to 1. DB QPS dropped 95%."</em></td></tr>
+      <tr><td>Pagination</td><td><em>"OFFSET 50000 scans and discards 50K rows. Keyset uses WHERE id &lt; :lastId — constant B-tree seek cost on any page."</em></td></tr>
+      <tr><td>Pool exhaustion</td><td><em>"p99 locked to exactly 3000ms — our connectionTimeout. hikaricp_connections_pending=40, active=10. Pool exhaustion masquerades as slow DB."</em></td></tr>
+      <tr><td>HPA bomb</td><td><em>"HPA scaled to 8 pods × 10 pool = 80 connections. Safe. Next scale event: 16 × 10 = 160, approaching max_connections=200. ProxySQL decouples pod count from DB connections."</em></td></tr>
+      <tr><td>Cache trade-off</td><td><em>"Redis caching brings stale reads. Orders: 2-minute TTL is fine. Stock counts: 30 seconds."</em></td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <div class="ct">Full 60-second answer template</div>
+    <div class="iq" style="margin-top:0">
+      <div class="tag">Template</div>
+      <p>"First I'd confirm it's the DB using p99 latency, the slow query log, and HikariCP wait metrics. I'd fix query-level issues — indexes, N+1, keyset pagination — then tune the connection pool and enable batch writes. For read-heavy load I'd add Redis caching and read replicas, accepting eventual consistency on non-critical reads. For write scale I'd move to async writes via Kafka outbox, partition large tables by date, and shard only as a last resort. I'd verify each step with a k6 load test against an SLO."</p>
+    </div>
+  </div>
+</div>
+
+<!-- LAB PANELS (injected by JS) ──────────────────────────────────────────── -->
+</main>
+</div>
+
+<script>
+// ── Lab data ───────────────────────────────────────────────────────────────────
+const LABS = [
+ {
+  id:'l01', num:'#1', tier:'query', title:'Index Impact',
+  desc:'A WHERE + ORDER BY query does a full scan on 50K rows. Add a composite index and watch p95 fall.',
+  before:'p95 ~800ms (full scan)', after:'p95 ~8ms (index seek)',
+  k6b:'k6 run k6-scripts/lab01_index.js --env ENDPOINT=bad',
+  k6g:'k6 run k6-scripts/lab01_index.js --env ENDPOINT=good',
+  steps:['Run Live Test → BAD to see full scan latency','Check EXPLAIN: type=ALL, rows = entire table',
+         'Apply fix: run sql/03_lab_fixes.sql (first block)',
+         'Run Live Test → GOOD — p95 should drop 100×','EXPLAIN again: type=ref, rows ≈ 10'],
+  bad:  { url:'/api/customers/{id}/orders/bad?status=SHIPPED&page=0&size=20',  label:'OFFSET + no index' },
+  good: { url:'/api/customers/{id}/orders?status=SHIPPED',                      label:'JOIN FETCH + index' },
+  fix: `<span class="cm">-- Before: EXPLAIN type=ALL, rows=50000</span>
+<span class="kw">SELECT</span> * <span class="kw">FROM</span> orders
+<span class="kw">WHERE</span> customer_id = <span class="num">1</span> <span class="kw">AND</span> status = <span class="str">'SHIPPED'</span>
+<span class="kw">ORDER BY</span> created_at <span class="kw">DESC LIMIT</span> <span class="num">20</span>;
+
+<span class="cm">-- Fix: composite index covers all three columns</span>
+<span class="kw">ALTER TABLE</span> orders
+  <span class="kw">ADD INDEX</span> idx_orders_customer_status_created
+    (customer_id, status, created_at <span class="kw">DESC</span>);`,
+  quote:'EXPLAIN showed type=ALL, 50K rows examined. Composite index on (customer_id, status, created_at) → type=ref, 10 rows, p95 from 800ms to 8ms.'
+ },
+ {
+  id:'l02', num:'#2', tier:'query', title:'N+1 Queries',
+  desc:'Listing 20 orders and their items fires 21 SQL queries. JOIN FETCH collapses it to 1.',
+  before:'21 queries per request', after:'1 query per request',
+  k6b:'k6 run k6-scripts/lab02_n1.js --env ENDPOINT=n1',
+  k6g:'k6 run k6-scripts/lab02_n1.js --env ENDPOINT=good',
+  steps:['Enable SQL logging: logging.level.org.hibernate.SQL=DEBUG',
+         'Run Live Test → N+1, count the SELECT statements in the app log',
+         'Run Live Test → JOIN FETCH, count again — should be 1',
+         'Watch DB QPS in Grafana — drops ~20× with JOIN FETCH'],
+  bad:  { url:'/api/customers/{id}/orders/n1?status=SHIPPED',   label:'Lazy loading (N+1)' },
+  good: { url:'/api/customers/{id}/orders?status=SHIPPED',      label:'JOIN FETCH (1 query)' },
+  fix: `<span class="cm">// BAD: accessing items triggers a SELECT per order → N+1</span>
+orders.stream().map(o ->
+  o.getItems().stream()  <span class="cm">// ← each call fires a new SELECT</span>
+   .map(i -> i.getProductName()).toList())
+
+<span class="cm">// GOOD: JOIN FETCH — single query with LEFT JOIN</span>
+<span class="ann">@Query</span>(<span class="str">"SELECT DISTINCT o FROM Order o "</span>
+     + <span class="str">"LEFT JOIN FETCH o.items i "</span>
+     + <span class="str">"WHERE o.customer.id = :cid AND o.status = :s"</span>)
+<span class="kw">List</span>&lt;Order&gt; <span class="fn">findOrdersWithItems</span>(...);`,
+  quote:'Lazy loading sent 21 queries per page. JOIN FETCH collapsed it to 1. DB QPS dropped from 2000 to 100.'
+ },
+ {
+  id:'l03', num:'#3', tier:'query', title:'Pagination',
+  desc:'OFFSET 10000 scans and discards 10K rows every request. Keyset uses WHERE id < :lastId — constant cost on any page.',
+  before:'deep page ~500ms', after:'deep page ~5ms',
+  k6b:'k6 run k6-scripts/lab03_pagination.js --env MODE=offset',
+  k6g:'k6 run k6-scripts/lab03_pagination.js --env MODE=keyset',
+  steps:['Run Live Test → OFFSET with page=500 (large offset)',
+         'Run Live Test → Keyset — follow the nextCursor',
+         'Compare latency — keyset stays flat on any page depth',
+         'Interview: "OFFSET scans and discards; keyset is an index seek"'],
+  bad:  { url:'/api/customers/{id}/orders/bad?status=SHIPPED&page=500&size=20', label:'OFFSET page=500' },
+  good: { url:'/api/customers/{id}/orders/keyset?size=20',                       label:'Keyset (cursor)' },
+  fix: `<span class="cm">-- BAD: OFFSET 10000 reads and discards 10K rows</span>
+<span class="kw">SELECT</span> * <span class="kw">FROM</span> orders
+<span class="kw">ORDER BY</span> id <span class="kw">DESC</span>
+<span class="kw">LIMIT</span> <span class="num">20</span> <span class="kw">OFFSET</span> <span class="num">10000</span>;
+
+<span class="cm">-- GOOD: keyset — always a narrow seek</span>
+<span class="kw">SELECT</span> * <span class="kw">FROM</span> orders
+<span class="kw">WHERE</span> id &lt; :lastId
+<span class="kw">ORDER BY</span> id <span class="kw">DESC LIMIT</span> <span class="num">20</span>;`,
+  quote:'OFFSET 10,000 scans and discards 10K rows. Keyset uses WHERE id < :lastId — B-tree seek cost is the same on page 1 and page 10,000.'
+ },
+ {
+  id:'l04', num:'#4', tier:'app', title:'Pool Exhaustion',
+  desc:'With pool=10 and high concurrency, p99 locks to exactly 3000ms (connectionTimeout). hikaricp_connections_pending spikes.',
+  before:'p99 = connectionTimeout value', after:'p99 < 200ms',
+  k6b:'k6 run k6-scripts/lab04_pool_exhaustion.js',
+  k6g:'# Increase maximum-pool-size to 50 in application.yml, restart',
+  steps:['Keep maximum-pool-size=10 (default in application.yml)',
+         'Run k6 script — ramps to 300 VUs',
+         'Grafana: hikaricp_connections_pending > 0 = exhausted',
+         'p99 snaps to exactly 3000ms — the connectionTimeout value',
+         'Fix: increase pool to 50; but pods × pool < max_connections'],
+  bad:  { url:'/api/customers/{id}/orders?status=SHIPPED', label:'With pool=10 (simulate load)' },
+  good: null,
+  fix: `<span class="cm"># application.yml — start small to see exhaustion</span>
+spring.datasource.hikari:
+  maximum-pool-size: <span class="num">10</span>   <span class="cm"># ← shrink to see p99 lock to 3000ms</span>
+  connection-timeout: <span class="num">3000</span> <span class="cm"># p99 locks to THIS value when pool full</span>
+
+<span class="cm"># Fix: increase, but respect the formula:</span>
+<span class="cm">#   pods × pool_size < mysql.max_connections</span>
+  maximum-pool-size: <span class="num">50</span>   <span class="cm"># after fix</span>`,
+  quote:'p99 jumped to exactly 3000ms — our connectionTimeout. Grafana showed hikaricp_connections_pending=40. Pool exhaustion masquerades as a slow database.'
+ },
+ {
+  id:'l05', num:'#5', tier:'app', title:'Batch Writes',
+  desc:'rewriteBatchedStatements=true + hibernate.jdbc.batch_size=50 combines 50 INSERTs into one TCP packet. 10× throughput.',
+  before:'~500 inserts/s', after:'~5000 inserts/s',
+  k6b:'# Measure: time mvn spring-boot:run (counts DataInitializer timing in logs)',
+  k6g:'# Already enabled: rewriteBatchedStatements=true in JDBC URL',
+  steps:['Already active — check the startup log: "[DataInitializer] Seed complete in X ms"',
+         'Verify in application.yml: hibernate.jdbc.batch_size=50',
+         'Verify JDBC URL contains rewriteBatchedStatements=true',
+         'Important: AUTO_INCREMENT / IDENTITY strategy disables Hibernate batching',
+         'Use SEQUENCE or TABLE strategy for high-throughput bulk writes'],
+  bad:  null,
+  good: null,
+  fix: `<span class="cm"># application.yml — already configured</span>
+spring.jpa.properties.hibernate:
+  jdbc.batch_size: <span class="num">50</span>
+  order_inserts: <span class="kw">true</span>
+  order_updates: <span class="kw">true</span>
+
+<span class="cm"># JDBC URL must include:</span>
+<span class="cm"># rewriteBatchedStatements=true</span>
+
+<span class="cm">// Gotcha: IDENTITY generation disables batching!</span>
+<span class="cm">// Use SEQUENCE strategy for bulk insert performance:</span>
+<span class="ann">@GeneratedValue</span>(strategy = GenerationType.<span class="kw">SEQUENCE</span>)`,
+  quote:'Without batching, each INSERT is its own round-trip. rewriteBatchedStatements groups 50 inserts into one packet. Throughput went from 500 to 5000 inserts/second.'
+ },
+ {
+  id:'l06', num:'#6', tier:'app', title:'Redis Cache',
+  desc:'@Cacheable drops DB QPS by 90% after warm-up. p95 goes from 50ms to 2ms. TTL controls staleness.',
+  before:'p95 ~50ms, DB QPS high', after:'p95 ~2ms (Redis hit)',
+  k6b:'k6 run k6-scripts/lab06_cache.js',
+  k6g:'k6 run k6-scripts/lab06_cache.js  # second run — cache is warm',
+  steps:['Activate Redis profile: -Dspring.profiles.active=redis',
+         'First test run → cold cache, all hits go to DB',
+         'Second test run → warm cache, watch p95 fall below 5ms',
+         'Grafana: spring_cache_gets_total{result="hit"} shows real hit ratio',
+         'Discuss TTL: orders=2 min, stock=30 s, customers=30 min'],
+  bad:  { url:'/api/customers/{id}/orders?status=SHIPPED', label:'First request (cold cache / DB)' },
+  good: { url:'/api/customers/{id}/orders?status=SHIPPED', label:'Second request (warm cache)' },
+  fix: `<span class="ann">@Cacheable</span>(value = <span class="str">"orders"</span>, key = <span class="str">"#cid + ':' + #status"</span>)
+<span class="ann">@Transactional</span>(readOnly = <span class="kw">true</span>)
+<span class="kw">public</span> OrderPageResponse <span class="fn">getOrders</span>(Long cid, String status) {
+    <span class="kw">return</span> orderRepo.<span class="fn">findOrdersWithItems</span>(cid, status);
+}
+
+<span class="cm">// Per-cache TTLs in RedisConfig.java (profile=redis)</span>
+cacheConfigs.put(<span class="str">"customers"</span>, defaults.<span class="fn">entryTtl</span>(Duration.<span class="fn">ofMinutes</span>(<span class="num">30</span>)));
+cacheConfigs.put(<span class="str">"orders"</span>,    defaults.<span class="fn">entryTtl</span>(Duration.<span class="fn">ofMinutes</span>(<span class="num">2</span>)));
+cacheConfigs.put(<span class="str">"products"</span>,  defaults.<span class="fn">entryTtl</span>(Duration.<span class="fn">ofSeconds</span>(<span class="num">30</span>)));`,
+  quote:'Once the cache warmed, p95 dropped from 50ms to 2ms. DB QPS fell 90%. The trade-off is stale reads — acceptable at 2-minute TTL for order lists.'
+ },
+ {
+  id:'l07', num:'#7', tier:'infra', title:'Read Replica',
+  desc:'AbstractRoutingDataSource routes @Transactional(readOnly=true) to the replica automatically.',
+  before:'All load on primary', after:'Reads → replica, writes → primary',
+  k6b:'# Start app with: -Dspring.profiles.active=replica',
+  k6g:'# See docker/docker-compose.yml for mysql-replica service',
+  steps:['Start Docker Compose full stack (docker/docker-compose.yml)',
+         'Verify replication: SHOW REPLICA STATUS\\G on mysql-replica',
+         'Start app with --spring.profiles.active=replica',
+         'Watch Grafana: primary CPU vs replica CPU',
+         'Discussion: eventual consistency — replica lag can be 10-100ms'],
+  bad: null, good: null,
+  fix: `<span class="cm">// DataSourceConfig.java (profile=replica)</span>
+<span class="kw">protected</span> Object <span class="fn">determineCurrentLookupKey</span>() {
+    <span class="kw">return</span> TransactionSynchronizationManager
+        .<span class="fn">isCurrentTransactionReadOnly</span>()
+        ? <span class="str">"REPLICA"</span> : <span class="str">"PRIMARY"</span>;
+}
+
+<span class="cm">// Service — just annotate correctly</span>
+<span class="ann">@Transactional</span>(readOnly = <span class="kw">true</span>)   <span class="cm">// → REPLICA pool</span>
+<span class="kw">public</span> OrderPageResponse <span class="fn">getOrders</span>(...) {}
+
+<span class="ann">@Transactional</span>                       <span class="cm">// → PRIMARY pool</span>
+<span class="kw">public</span> Order <span class="fn">createOrder</span>(...) {}`,
+  quote:'Routing @Transactional(readOnly=true) to the replica offloaded 80% of queries from primary. Replication lag stayed under 50ms. Trade-off: eventual consistency on reads.'
+ },
+ {
+  id:'l08', num:'#8', tier:'infra', title:'Lock Contention',
+  desc:'200 VUs decrement the same stock row. Optimistic locking → 40% 409s. Atomic UPDATE WHERE qty≥1 → 0 conflicts.',
+  before:'40% 409 conflicts', after:'0% conflicts',
+  k6b:'k6 run k6-scripts/lab08_stock_contention.js --env STRATEGY=bad',
+  k6g:'k6 run k6-scripts/lab08_stock_contention.js --env STRATEGY=atomic',
+  steps:['Reset stock: UPDATE products SET stock_quantity=100000, version=0 WHERE id=1',
+         'Run Live Test → BAD (optimistic) — watch 409 count climb',
+         'Reset stock again',
+         'Run Live Test → ATOMIC — 0 conflicts, 422 only on genuine out-of-stock',
+         'Key insight: optimistic = read-modify-write (3 round-trips); atomic = 1 operation'],
+  bad:  { url:'/api/products/1/decrement/bad?qty=1',    label:'Optimistic lock (409 conflicts)' },
+  good: { url:'/api/products/1/decrement/atomic?qty=1', label:'Atomic UPDATE (no conflicts)' },
+  fix: `<span class="cm">// BAD: read → check → write = race condition</span>
+Product p = repo.<span class="fn">findById</span>(id);
+<span class="kw">if</span> (p.getStock() &lt; qty) <span class="kw">return false</span>;
+p.<span class="fn">setStock</span>(p.getStock() - qty);
+repo.<span class="fn">save</span>(p);  <span class="cm">// @Version throws on conflict</span>
+
+<span class="cm">// GOOD: single atomic conditional UPDATE</span>
+<span class="ann">@Modifying</span>
+<span class="ann">@Query</span>(<span class="str">"UPDATE Product p "</span>
+     + <span class="str">"SET p.stockQuantity = p.stockQuantity - :qty "</span>
+     + <span class="str">"WHERE p.id = :id AND p.stockQuantity >= :qty"</span>)
+<span class="kw">int</span> <span class="fn">decrementStock</span>(@Param(<span class="str">"id"</span>) Long id, @Param(<span class="str">"qty"</span>) <span class="kw">int</span> qty);`,
+  quote:'200 concurrent VUs produced 40% 409 conflicts with optimistic locking. The atomic UPDATE WHERE qty >= :qty had 0 conflicts — a single serializable operation vs a read-modify-write.'
+ },
+ {
+  id:'l09', num:'#9', tier:'data', title:'Partitioning',
+  desc:'PARTITION BY RANGE on created_at lets you drop old partitions in milliseconds. DELETE on 1M rows takes 60 seconds and holds locks.',
+  before:'DELETE 1M rows ~60s + locks', after:'DROP PARTITION ~1ms',
+  k6b:'# See sql/03_lab_fixes.sql — partitioning section',
+  k6g:'# Time: ALTER TABLE orders DROP PARTITION p2024',
+  steps:['Time a DELETE: DELETE FROM orders WHERE YEAR(created_at) = 2023',
+         'Note the lock time — other queries wait during this',
+         'Apply RANGE partitioning from sql/03_lab_fixes.sql',
+         'Time: ALTER TABLE orders DROP PARTITION p2023',
+         'Verify partition pruning with EXPLAIN on a date-range query'],
+  bad: null, good: null,
+  fix: `<span class="kw">ALTER TABLE</span> orders
+  <span class="kw">PARTITION BY RANGE</span> (<span class="fn">YEAR</span>(created_at)) (
+    <span class="kw">PARTITION</span> p2023 <span class="kw">VALUES LESS THAN</span> (<span class="num">2024</span>),
+    <span class="kw">PARTITION</span> p2024 <span class="kw">VALUES LESS THAN</span> (<span class="num">2025</span>),
+    <span class="kw">PARTITION</span> p2025 <span class="kw">VALUES LESS THAN</span> (<span class="num">2026</span>),
+    <span class="kw">PARTITION</span> pmax  <span class="kw">VALUES LESS THAN MAXVALUE</span>
+  );
+
+<span class="cm">-- Drop a year of data: ~1ms, no locks</span>
+<span class="kw">ALTER TABLE</span> orders <span class="kw">DROP PARTITION</span> p2023;`,
+  quote:'Purging 1M old orders with DELETE took 58 seconds and held locks. RANGE partitioning let us DROP PARTITION in under 1ms — the lock was gone entirely.'
+ },
+ {
+  id:'l10', num:'#10', tier:'infra', title:'HPA Connection Bomb',
+  desc:'HPA scales pods from 1→10. 10 pods × 10 pool = 100 connections. Next scale event hits MySQL max_connections.',
+  before:'Uncapped: pods × pool = DB death', after:'ProxySQL caps DB connections',
+  k6b:'k6 run k6-scripts/lab10_hpa_connection_bomb.js',
+  k6g:'# Deploy ProxySQL: kubectl apply -f k8s/minikube/',
+  steps:['Deploy to Minikube: kubectl apply -f k8s/minikube/',
+         'Run load test — watch HPA scale pods from 1 to 10',
+         'Calculate: pods × pool_size → compare to max_connections',
+         'Break it: set maxReplicas=20 in hpa.yml — 20 × 10 = 200 = max_connections',
+         'Fix: add ProxySQL — pods connect to proxy, proxy holds 20 DB connections regardless of pods'],
+  bad: null, good: null,
+  fix: `<span class="cm">// The formula every interviewer wants to hear:</span>
+<span class="cm">// pods × pool_size < max_connections</span>
+<span class="cm">// safe_pool = (max_connections - admin_connections)</span>
+<span class="cm">//             / expected_max_pods</span>
+
+<span class="cm"># HPA hpa.yml — keep the ceiling safe</span>
+maxReplicas: <span class="num">10</span>   <span class="cm"># 10 × 5 pool = 50 < max_connections=200</span>
+
+<span class="cm"># With ProxySQL — decouple pod count from DB connections</span>
+<span class="cm"># 100 pods × 10 pool → ProxySQL → 20 real MySQL connections</span>`,
+  quote:'HPA scaled to 8 pods × 10 pool = 80 connections. One more scale event would have been 16 × 10 = 160, approaching max_connections=200. ProxySQL decoupled pod count from DB connections.'
+ },
+ {
+  id:'l11', num:'#11', tier:'data', title:'Async Writes',
+  desc:'Write spikes overwhelm MySQL. Publish to Kafka outbox instead — response returns in <5ms, consumer persists at its own pace.',
+  before:'p99 spikes on write load', after:'p99 < 5ms (event queued)',
+  k6b:'# POST /api/customers/{id}/orders/async',
+  k6g:'# Already wired: endpoint returns 202 Accepted immediately',
+  steps:['POST /api/customers/1/orders/async — observe it returns 202 immediately',
+         'Check app log — order event logged but not yet in DB',
+         'Real Kafka: add spring-kafka dependency + @KafkaListener consumer',
+         'Use outbox pattern: write event to DB in same transaction, relay picks it up',
+         'Trade-off: can\'t immediately query the new order in the same session'],
+  bad:  { url:'/api/customers/{id}/orders/bad?status=SHIPPED&page=0&size=5', label:'Sync read (for timing reference)' },
+  good: { url:'/api/customers/{id}/orders/async', label:'Async write (202 Accepted, simulated)', method:'POST' },
+  fix: `<span class="cm">// Controller: return 202 Accepted immediately</span>
+<span class="ann">@PostMapping</span>(<span class="str">"/customers/{id}/orders/async"</span>)
+<span class="kw">public</span> ResponseEntity <span class="fn">placeOrderAsync</span>(...) {
+    orderService.<span class="fn">queueOrder</span>(id, json);
+    <span class="kw">return</span> ResponseEntity.<span class="fn">accepted</span>().<span class="fn">body</span>(<span class="str">"Order queued"</span>);
+}
+
+<span class="cm">// With Kafka wired:</span>
+kafkaTemplate.<span class="fn">send</span>(<span class="str">"orders.created"</span>, id.toString(), json);
+
+<span class="cm">// @KafkaListener consumer:</span>
+<span class="ann">@KafkaListener</span>(topics = <span class="str">"orders.created"</span>)
+<span class="kw">public void</span> <span class="fn">consume</span>(String json) { <span class="cm">/* persist to DB */</span> }`,
+  quote:'Under write spikes, synchronous DB writes caused p99 to hit 2 seconds. Publishing to Kafka returned in under 5ms. The outbox consumer processed the backlog at a steady rate.'
+ }
+];
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let sampleCustomerId = 1;
+
+// ── Load seed status ──────────────────────────────────────────────────────────
+async function loadStatus() {
+  try {
+    const [status, sample] = await Promise.all([
+      fetch('/api/lab/status').then(r => r.json()),
+      fetch('/api/lab/sample-customer').then(r => r.json())
+    ]);
+
+    sampleCustomerId = sample.customerId || 1;
+
+    const dot = document.getElementById('db-dot');
+    const txt = document.getElementById('db-status');
+    dot.classList.add('ok');
+    txt.textContent = `${status.counts.orders.toLocaleString()} orders loaded`;
+    txt.style.color = 'var(--accent)';
+
+    const counts = status.counts;
+    const el = document.getElementById('seed-counts');
+    el.innerHTML = [
+      {n: counts.customers.toLocaleString(),  l: 'customers'},
+      {n: counts.orders.toLocaleString(),     l: 'orders'},
+      {n: counts.orderItems.toLocaleString(), l: 'order items'},
+      {n: counts.products.toLocaleString(),   l: 'products'}
+    ].map(c => `<div class="sc"><div class="n">${c.n}</div><div class="l">${c.l}</div></div>`).join('');
+
+    const tip = document.getElementById('index-tip');
+    tip.innerHTML = status.indexLab1Applied
+      ? '<span style="color:var(--good)">✓ Lab #1 composite index is applied</span>'
+      : '<span style="color:var(--warn)">⚠ Lab #1 composite index NOT applied — run sql/03_lab_fixes.sql to add it, then compare p95</span>';
+  } catch (e) {
+    document.getElementById('db-dot').classList.add('warn');
+    document.getElementById('db-status').textContent = 'connecting…';
+    setTimeout(loadStatus, 3000);
+  }
+}
+
+// ── Lab grid ──────────────────────────────────────────────────────────────────
+function renderGrid() {
+  document.getElementById('lab-grid').innerHTML = LABS.map(lab => `
+    <div class="lc ${lab.tier}" data-lab="${lab.id}" tabindex="0">
+      <div class="lnum">LAB ${lab.num} · ${lab.tier.toUpperCase()}</div>
+      <div class="lt">${lab.title}</div>
+      <div class="ld">${lab.desc}</div>
+      <div class="mr">
+        <span class="m b">✗ ${lab.before}</span>
+        <span class="arr">→</span>
+        <span class="m g">✓ ${lab.after}</span>
+      </div>
+    </div>`).join('');
+  document.querySelectorAll('.lc').forEach(c => {
+    c.addEventListener('click', () => nav(c.dataset.lab));
+    c.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' ') nav(c.dataset.lab); });
+  });
+}
+
+// ── Live test ─────────────────────────────────────────────────────────────────
+async function runLive(url, boxId, labelClass, method='GET') {
+  const box = document.getElementById(boxId);
+  box.innerHTML = '<span class="spinner"></span>';
+
+  const fullUrl = url.replace('{id}', sampleCustomerId);
+  try {
+    const t0 = performance.now();
+    const res = await fetch(fullUrl, { method });
+    const ms  = performance.now() - t0;
+    let body;
+    try { body = await res.json(); } catch { body = await res.text(); }
+    const timeClass = labelClass === 'bad'
+      ? (ms > 200 ? 'bad' : 'good')
+      : (ms < 100 ? 'good' : '');
+
+    const jsonStr = JSON.stringify(body, null, 2);
+    const id = boxId + '-json';
+    box.innerHTML = `
+      <div class="result-time ${timeClass}">${ms.toFixed(0)} ms</div>
+      <div class="result-meta">HTTP ${res.status} · ${fullUrl}</div>
+      <button class="toggle-json" onclick="toggleJson('${id}')">show response</button>
+      <div class="result-json" id="${id}">${esc(jsonStr)}</div>`;
+  } catch(e) {
+    box.innerHTML = `<span style="color:var(--bad);font-size:12px">Error: ${e.message}</span>`;
+  }
+}
+
+function toggleJson(id) {
+  const el = document.getElementById(id);
+  const btn = el.previousElementSibling;
+  if (el.style.display === 'block') { el.style.display='none'; btn.textContent='show response'; }
+  else { el.style.display='block'; btn.textContent='hide response'; }
+}
+
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Build lab detail panel ────────────────────────────────────────────────────
+function buildLab(lab) {
+  const el = document.createElement('div');
+  el.className = 'panel';
+  el.id = 'panel-' + lab.id;
+
+  const liveSection = (lab.bad || lab.good) ? `
+    <div class="live-test">
+      <div class="lt-header">
+        <span class="lt-title">⚡ Live Test</span>
+      </div>
+      <div class="lt-body">
+        <div class="compare-grid">
+          ${lab.bad ? `
+          <div class="result-box">
+            <div class="result-label bad">${lab.bad.label}</div>
+            <button class="run-btn" onclick="runLive('${lab.bad.url}','res-bad-${lab.id}','bad','${lab.bad.method||'GET'}')">▶ Run</button>
+            <div style="margin-top:10px"><div id="res-bad-${lab.id}" class="placeholder">Click Run to test</div></div>
+          </div>` : '<div></div>'}
+          ${lab.good ? `
+          <div class="result-box">
+            <div class="result-label good">${lab.good.label}</div>
+            <button class="run-btn" onclick="runLive('${lab.good.url}','res-good-${lab.id}','good','${lab.good.method||'GET'}')">▶ Run</button>
+            <div style="margin-top:10px"><div id="res-good-${lab.id}" class="placeholder">Click Run to test</div></div>
+          </div>` : '<div></div>'}
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--fg3)">
+          Uses customer ID: <span style="font-family:var(--mono);color:var(--info)">${sampleCustomerId}</span> (busiest customer in the seed data)
+        </div>
+      </div>
+    </div>` : '';
+
+  el.innerHTML = `
+    <button class="back" onclick="nav('overview')">← All Labs</button>
+    <div class="ph">
+      <h1>${lab.title}</h1>
+      <p>LAB ${lab.num} · ${lab.tier.toUpperCase()} LAYER · ${lab.desc}</p>
+    </div>
+    ${liveSection}
+    <div class="two">
+      <div class="card" style="margin-bottom:0">
+        <div class="ct">Steps</div>
+        <ul class="steps">
+          ${lab.steps.map(s=>`<li><span class="sn">→</span><div>${s}</div></li>`).join('')}
+        </ul>
+        <div class="mr" style="margin-top:12px">
+          <span class="m b">Before: ${lab.before}</span>
+          <span class="arr">→</span>
+          <span class="m g">After: ${lab.after}</span>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:0">
+        <div class="ct">Code Fix</div>
+        <pre>${lab.fix}</pre>
+      </div>
+    </div>
+    <div style="height:14px"></div>
+    <div class="card">
+      <div class="ct">k6 Commands</div>
+      <div class="cb"><div class="cb-hd">📊 Baseline</div>
+      <div class="cb-bd"><div class="cl"><span class="ps">$</span>${lab.k6b}</div></div></div>
+      <div class="cb" style="margin-top:8px"><div class="cb-hd">✅ After fix</div>
+      <div class="cb-bd"><div class="cl"><span class="ps">$</span>${lab.k6g}</div></div></div>
+    </div>
+    <div class="iq">
+      <div class="tag">Interview quote</div>
+      <p>"${lab.quote}"</p>
+    </div>`;
+  document.querySelector('.main').appendChild(el);
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function nav(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
+
+  let panelId = 'panel-' + id;
+  let panel = document.getElementById(panelId);
+
+  if (!panel) {
+    const lab = LABS.find(l => l.id === id);
+    if (lab) { buildLab(lab); panel = document.getElementById(panelId); }
+  }
+
+  if (panel) { panel.classList.add('active'); }
+
+  const btn = document.querySelector(`[data-p="${id}"]`);
+  if (btn) btn.classList.add('active');
+
+  try { location.hash = id; } catch {}
+  document.querySelector('.main').scrollTop = 0;
+}
+
+document.querySelectorAll('.nb[data-p]').forEach(b =>
+  b.addEventListener('click', () => nav(b.dataset.p)));
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+renderGrid();
+loadStatus();
+
+const h = location.hash.replace('#', '');
+if (h) nav(h);
+</script>
+</body>
+</html>

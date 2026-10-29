@@ -1,0 +1,19 @@
+[mysqld]
+# Replication identity
+server-id = 1
+log-bin   = mysql-bin
+binlog_format = ROW
+
+# Performance tuning (laptop defaults)
+innodb_buffer_pool_size = 512M    # increase to 70% RAM on prod
+innodb_log_file_size    = 128M
+innodb_flush_log_at_trx_commit = 1  # change to 2 for lower write latency (less durable)
+sync_binlog = 1
+
+# Connections
+max_connections = 200
+
+# Slow query log — already on by default in 8.0
+slow_query_log  = 1
+long_query_time = 0.2
+log_output      = TABLE

@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+
+  - job_name: 'spring-app'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['lab-app:8080']          # in Docker Compose
+      - targets: ['host.docker.internal:8080']  # when running app locally
+    scrape_interval: 5s
+
+  - job_name: 'mysql-primary'
+    static_configs:
+      - targets: ['mysqld-exporter:9104']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'mysql-primary'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

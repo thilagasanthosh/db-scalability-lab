@@ -1,0 +1,8 @@
+[mysqld]
+server-id         = 2
+relay-log         = relay-bin
+read_only         = 1          # replica accepts only replication writes
+super_read_only   = 1
+
+innodb_buffer_pool_size = 256M
+max_connections         = 200

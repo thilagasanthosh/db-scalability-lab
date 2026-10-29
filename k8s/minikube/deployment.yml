@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-scale-app
+  labels:
+    app: db-scale-app
+spec:
+  replicas: 1   # Start with 1; HPA will scale this up
+  selector:
+    matchLabels:
+      app: db-scale-app
+  template:
+    metadata:
+      labels:
+        app: db-scale-app
+      annotations:
+        # Prometheus scrape annotations
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+        - name: app
+          image: db-scalability-lab:latest
+          imagePullPolicy: Never   # use local minikube image
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_PRIMARY_URL
+              value: "jdbc:mysql://mysql-service:3306/scalabilitylab?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&rewriteBatchedStatements=true"
+            - name: SPRING_DATASOURCE_PRIMARY_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: username
+            - name: SPRING_DATASOURCE_PRIMARY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: password
+            - name: SPRING_DATA_REDIS_HOST
+              value: redis-service
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: kafka-service:9092
+            # Lab #4: start small so pool exhaustion is visible
+            - name: SPRING_DATASOURCE_PRIMARY_HIKARI_MAXIMUM_POOL_SIZE
+              value: "5"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 5

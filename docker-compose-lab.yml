@@ -1,0 +1,134 @@
+version: "3.9"
+
+# =============================================================================
+#  SIMPLE LAB STACK — start everything with:
+#    docker compose -f docker-compose-lab.yml up --build
+#
+#  Services:
+#    mysql    — port 3306  (required)
+#    redis    — port 6379  (Labs #6)
+#    app      — port 8080  (Spring Boot)  → open http://localhost:8080
+#    prometheus — port 9090
+#    grafana  — port 3000  (admin/admin)
+#
+#  For the FULL stack (replica, ProxySQL, Kafka) see docker/docker-compose.yml
+# =============================================================================
+
+networks:
+  lab:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+
+services:
+
+  # ── MySQL ────────────────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: lab-mysql
+    networks: [lab]
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: scalabilitylab
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/mysql/primary.cnf:/etc/mysql/conf.d/lab.cnf:ro
+    command: --max_connections=200
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ── Redis ─────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: lab-redis
+    networks: [lab]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Spring Boot App ───────────────────────────────────────────────────────────
+  app:
+    build: .
+    container_name: lab-app
+    networks: [lab]
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/scalabilitylab?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&rewriteBatchedStatements=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+      SPRING_DATA_REDIS_HOST: redis
+      # Activate Redis caching (Lab #6)
+      SPRING_PROFILES_ACTIVE: redis
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ── mysqld-exporter (MySQL metrics → Prometheus) ─────────────────────────────
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    container_name: lab-mysqld-exporter
+    networks: [lab]
+    ports:
+      - "9104:9104"
+    environment:
+      DATA_SOURCE_NAME: "root:root@(mysql:3306)/scalabilitylab"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command:
+      - --collect.info_schema.innodb_metrics
+      - --collect.info_schema.tables
+      - --collect.perf_schema.eventsstatements
+
+  # ── Prometheus ────────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: lab-prometheus
+    networks: [lab]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+
+  # ── Grafana ───────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: lab-grafana
+    networks: [lab]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on: [prometheus]

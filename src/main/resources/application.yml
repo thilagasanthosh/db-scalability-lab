@@ -1,0 +1,101 @@
+spring:
+  application:
+    name: db-scalability-lab
+
+  # ── Datasource (Standard Spring Boot auto-config) ─────────────────────────
+  # Spring Boot creates a HikariDataSource from these properties automatically.
+  # For the replica profile, DataSourceConfig.java takes over.
+  datasource:
+    url: jdbc:mysql://localhost:3306/scalabilitylab?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&rewriteBatchedStatements=true
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: PrimaryPool
+      maximum-pool-size: 10          # Lab #4: shrink to 5 to see pool exhaustion
+      minimum-idle: 5
+      connection-timeout: 3000       # fail fast — exposes exhaustion as exact 3s p99
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      leak-detection-threshold: 2000
+
+    # Used only with --spring.profiles.active=replica
+    primary:
+      url: jdbc:mysql://localhost:3306/scalabilitylab?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&rewriteBatchedStatements=true
+      username: root
+      password: root
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      hikari:
+        pool-name: PrimaryPool
+        maximum-pool-size: 10
+        minimum-idle: 5
+        connection-timeout: 3000
+
+    replica:
+      url: jdbc:mysql://localhost:3307/scalabilitylab?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      username: replica_user
+      password: replica_pass
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      hikari:
+        pool-name: ReplicaPool
+        maximum-pool-size: 20
+        minimum-idle: 5
+        connection-timeout: 3000
+
+  # ── JPA / Hibernate ────────────────────────────────────────────────────────
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: false
+        jdbc:
+          batch_size: 50             # Lab #5: batch inserts
+          order_inserts: true
+          order_updates: true
+        default_batch_fetch_size: 25 # Lab #2: prevents N+1 for collections
+
+  # ── Cache ──────────────────────────────────────────────────────────────────
+  # Default: simple in-memory cache (no Redis required to start)
+  # With redis profile: RedisConfig activates and swaps this to Redis
+  cache:
+    type: simple
+
+  # ── Redis (optional — needed for Lab #6) ──────────────────────────────────
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
+      timeout: 2000ms
+      connect-timeout: 1000ms
+      lettuce:
+        pool:
+          max-active: 20
+          max-idle: 10
+
+# ── Actuator + Prometheus ──────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    prometheus:
+      enabled: true
+    health:
+      show-details: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+
+# ── Logging ────────────────────────────────────────────────────────────────
+logging:
+  level:
+    org.hibernate.SQL: DEBUG         # see every SQL query — compare before/after
+    com.zaxxer.hikari: DEBUG         # see pool acquire/release events
+    com.lab.dbscale: INFO
