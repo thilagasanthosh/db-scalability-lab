@@ -155,13 +155,6 @@ pre { background: var(--code-bg); border: 1px solid var(--border); border-radius
 .ps { color: var(--accent); user-select: none; margin-right: 6px; }
 .cmt { color: var(--fg3); }
 
-/* ── Interview quote ─────────────────────────────────────────────────────────── */
-.iq { background: var(--bg2); border: 1px solid var(--border);
-      border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
-      padding: 12px 14px; margin-top: 14px; }
-.iq .tag { font-size: 10px; font-weight: 700; text-transform: uppercase;
-           letter-spacing: .08em; color: var(--accent); margin-bottom: 5px; }
-.iq p { font-size: 13px; font-style: italic; line-height: 1.6; }
 
 /* ── Two col ─────────────────────────────────────────────────────────────────── */
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -221,7 +214,6 @@ tr:last-child td { border-bottom: none; }
   <div class="slbl">Start here</div>
   <button class="nb active" data-p="overview">🗺 Overview</button>
   <button class="nb" data-p="setup">⚙ Setup</button>
-  <button class="nb" data-p="interview">🎯 Interview Guide</button>
   <a class="nb" href="/swagger-ui.html" target="_blank" style="text-decoration:none">
     📄 Swagger UI <span style="margin-left:auto;font-size:10px;opacity:.5">↗</span>
   </a>
@@ -321,46 +313,6 @@ tr:last-child td { border-bottom: none; }
   </div>
 </div>
 
-<!-- INTERVIEW ──────────────────────────────────────────────────────────────── -->
-<div class="panel" id="panel-interview">
-  <div class="ph"><h1>Interview Guide</h1><p>The answer template · key phrases · fix order</p></div>
-  <div class="card">
-    <div class="ct">Always open with this</div>
-    <div class="iq" style="margin-top:0">
-      <div class="tag">Opening</div>
-      <p>"I'd prove it's the database first — check p99 latency, the slow query log, and HikariCP pending connections. Then I fix the cheapest layer that moves p99, not the most impressive one."</p>
-    </div>
-  </div>
-  <div class="card">
-    <div class="ct">Fix in order of cost — never jump to sharding first</div>
-    <ul class="steps">
-      <li><span class="sn">1</span><div><strong>Query level</strong> — EXPLAIN, composite indexes, fix N+1 with JOIN FETCH, replace OFFSET pagination with keyset. Zero infra cost.</div></li>
-      <li><span class="sn">2</span><div><strong>Application level</strong> — HikariCP pool size, rewriteBatchedStatements, short transactions, Redis @Cacheable.</div></li>
-      <li><span class="sn">3</span><div><strong>Infrastructure level</strong> — vertical scale, read replicas via AbstractRoutingDataSource, ProxySQL to cap connections.</div></li>
-      <li><span class="sn">4</span><div><strong>Data level</strong> — RANGE partitioning, archival, async CQRS. Sharding only when one node truly can't hold the data.</div></li>
-    </ul>
-  </div>
-  <div class="card">
-    <div class="ct">Phrases that show depth</div>
-    <table>
-      <tr><th>Topic</th><th>What to say</th></tr>
-      <tr><td>Indexes</td><td><em>"EXPLAIN showed type=ALL, 50K rows examined. Composite index on (customer_id, status, created_at) → type=ref, ~10 rows, p95 from 800ms to 8ms."</em></td></tr>
-      <tr><td>N+1</td><td><em>"Lazy loading sent N+1 queries per page. JOIN FETCH collapsed it to 1. DB QPS dropped 95%."</em></td></tr>
-      <tr><td>Pagination</td><td><em>"OFFSET 50000 scans and discards 50K rows. Keyset uses WHERE id &lt; :lastId — constant B-tree seek cost on any page."</em></td></tr>
-      <tr><td>Pool exhaustion</td><td><em>"p99 locked to exactly 3000ms — our connectionTimeout. hikaricp_connections_pending=40, active=10. Pool exhaustion masquerades as slow DB."</em></td></tr>
-      <tr><td>HPA bomb</td><td><em>"HPA scaled to 8 pods × 10 pool = 80 connections. Safe. Next scale event: 16 × 10 = 160, approaching max_connections=200. ProxySQL decouples pod count from DB connections."</em></td></tr>
-      <tr><td>Cache trade-off</td><td><em>"Redis caching brings stale reads. Orders: 2-minute TTL is fine. Stock counts: 30 seconds."</em></td></tr>
-    </table>
-  </div>
-  <div class="card">
-    <div class="ct">Full 60-second answer template</div>
-    <div class="iq" style="margin-top:0">
-      <div class="tag">Template</div>
-      <p>"First I'd confirm it's the DB using p99 latency, the slow query log, and HikariCP wait metrics. I'd fix query-level issues — indexes, N+1, keyset pagination — then tune the connection pool and enable batch writes. For read-heavy load I'd add Redis caching and read replicas, accepting eventual consistency on non-critical reads. For write scale I'd move to async writes via Kafka outbox, partition large tables by date, and shard only as a last resort. I'd verify each step with a k6 load test against an SLO."</p>
-    </div>
-  </div>
-</div>
-
 <!-- LAB PANELS (injected by JS) ──────────────────────────────────────────── -->
 </main>
 </div>
@@ -387,8 +339,7 @@ const LABS = [
 <span class="cm">-- Fix: composite index covers all three columns</span>
 <span class="kw">ALTER TABLE</span> orders
   <span class="kw">ADD INDEX</span> idx_orders_customer_status_created
-    (customer_id, status, created_at <span class="kw">DESC</span>);`,
-  quote:'EXPLAIN showed type=ALL, 50K rows examined. Composite index on (customer_id, status, created_at) → type=ref, 10 rows, p95 from 800ms to 8ms.'
+    (customer_id, status, created_at <span class="kw">DESC</span>);`
  },
  {
   id:'l02', num:'#2', tier:'query', title:'N+1 Queries',
@@ -411,8 +362,7 @@ orders.stream().map(o ->
 <span class="ann">@Query</span>(<span class="str">"SELECT DISTINCT o FROM Order o "</span>
      + <span class="str">"LEFT JOIN FETCH o.items i "</span>
      + <span class="str">"WHERE o.customer.id = :cid AND o.status = :s"</span>)
-<span class="kw">List</span>&lt;Order&gt; <span class="fn">findOrdersWithItems</span>(...);`,
-  quote:'Lazy loading sent 21 queries per page. JOIN FETCH collapsed it to 1. DB QPS dropped from 2000 to 100.'
+<span class="kw">List</span>&lt;Order&gt; <span class="fn">findOrdersWithItems</span>(...);`
  },
  {
   id:'l03', num:'#3', tier:'query', title:'Pagination',
@@ -422,8 +372,7 @@ orders.stream().map(o ->
   k6g:'k6 run k6-scripts/lab03_pagination.js --env MODE=keyset',
   steps:['Run Live Test → OFFSET with page=500 (large offset)',
          'Run Live Test → Keyset — follow the nextCursor',
-         'Compare latency — keyset stays flat on any page depth',
-         'Interview: "OFFSET scans and discards; keyset is an index seek"'],
+         'Compare latency — keyset stays flat on any page depth'],
   bad:  { url:'/api/customers/{id}/orders/bad?status=SHIPPED&page=500&size=20', label:'OFFSET page=500' },
   good: { url:'/api/customers/{id}/orders/keyset?size=20',                       label:'Keyset (cursor)' },
   fix: `<span class="cm">-- BAD: OFFSET 10000 reads and discards 10K rows</span>
@@ -434,8 +383,7 @@ orders.stream().map(o ->
 <span class="cm">-- GOOD: keyset — always a narrow seek</span>
 <span class="kw">SELECT</span> * <span class="kw">FROM</span> orders
 <span class="kw">WHERE</span> id &lt; :lastId
-<span class="kw">ORDER BY</span> id <span class="kw">DESC LIMIT</span> <span class="num">20</span>;`,
-  quote:'OFFSET 10,000 scans and discards 10K rows. Keyset uses WHERE id < :lastId — B-tree seek cost is the same on page 1 and page 10,000.'
+<span class="kw">ORDER BY</span> id <span class="kw">DESC LIMIT</span> <span class="num">20</span>;`
  },
  {
   id:'l04', num:'#4', tier:'app', title:'Pool Exhaustion',
@@ -457,8 +405,7 @@ spring.datasource.hikari:
 
 <span class="cm"># Fix: increase, but respect the formula:</span>
 <span class="cm">#   pods × pool_size < mysql.max_connections</span>
-  maximum-pool-size: <span class="num">50</span>   <span class="cm"># after fix</span>`,
-  quote:'p99 jumped to exactly 3000ms — our connectionTimeout. Grafana showed hikaricp_connections_pending=40. Pool exhaustion masquerades as a slow database.'
+  maximum-pool-size: <span class="num">50</span>   <span class="cm"># after fix</span>`
  },
  {
   id:'l05', num:'#5', tier:'app', title:'Batch Writes',
@@ -484,8 +431,7 @@ spring.jpa.properties.hibernate:
 
 <span class="cm">// Gotcha: IDENTITY generation disables batching!</span>
 <span class="cm">// Use SEQUENCE strategy for bulk insert performance:</span>
-<span class="ann">@GeneratedValue</span>(strategy = GenerationType.<span class="kw">SEQUENCE</span>)`,
-  quote:'Without batching, each INSERT is its own round-trip. rewriteBatchedStatements groups 50 inserts into one packet. Throughput went from 500 to 5000 inserts/second.'
+<span class="ann">@GeneratedValue</span>(strategy = GenerationType.<span class="kw">SEQUENCE</span>)`
  },
  {
   id:'l06', num:'#6', tier:'app', title:'Redis Cache',
@@ -509,8 +455,7 @@ spring.jpa.properties.hibernate:
 <span class="cm">// Per-cache TTLs in RedisConfig.java (profile=redis)</span>
 cacheConfigs.put(<span class="str">"customers"</span>, defaults.<span class="fn">entryTtl</span>(Duration.<span class="fn">ofMinutes</span>(<span class="num">30</span>)));
 cacheConfigs.put(<span class="str">"orders"</span>,    defaults.<span class="fn">entryTtl</span>(Duration.<span class="fn">ofMinutes</span>(<span class="num">2</span>)));
-cacheConfigs.put(<span class="str">"products"</span>,  defaults.<span class="fn">entryTtl</span>(Duration.<span class="fn">ofSeconds</span>(<span class="num">30</span>)));`,
-  quote:'Once the cache warmed, p95 dropped from 50ms to 2ms. DB QPS fell 90%. The trade-off is stale reads — acceptable at 2-minute TTL for order lists.'
+cacheConfigs.put(<span class="str">"products"</span>,  defaults.<span class="fn">entryTtl</span>(Duration.<span class="fn">ofSeconds</span>(<span class="num">30</span>)));`
  },
  {
   id:'l07', num:'#7', tier:'infra', title:'Read Replica',
@@ -536,8 +481,7 @@ cacheConfigs.put(<span class="str">"products"</span>,  defaults.<span class="fn"
 <span class="kw">public</span> OrderPageResponse <span class="fn">getOrders</span>(...) {}
 
 <span class="ann">@Transactional</span>                       <span class="cm">// → PRIMARY pool</span>
-<span class="kw">public</span> Order <span class="fn">createOrder</span>(...) {}`,
-  quote:'Routing @Transactional(readOnly=true) to the replica offloaded 80% of queries from primary. Replication lag stayed under 50ms. Trade-off: eventual consistency on reads.'
+<span class="kw">public</span> Order <span class="fn">createOrder</span>(...) {}`
  },
  {
   id:'l08', num:'#8', tier:'infra', title:'Lock Contention',
@@ -563,8 +507,7 @@ repo.<span class="fn">save</span>(p);  <span class="cm">// @Version throws on co
 <span class="ann">@Query</span>(<span class="str">"UPDATE Product p "</span>
      + <span class="str">"SET p.stockQuantity = p.stockQuantity - :qty "</span>
      + <span class="str">"WHERE p.id = :id AND p.stockQuantity >= :qty"</span>)
-<span class="kw">int</span> <span class="fn">decrementStock</span>(@Param(<span class="str">"id"</span>) Long id, @Param(<span class="str">"qty"</span>) <span class="kw">int</span> qty);`,
-  quote:'200 concurrent VUs produced 40% 409 conflicts with optimistic locking. The atomic UPDATE WHERE qty >= :qty had 0 conflicts — a single serializable operation vs a read-modify-write.'
+<span class="kw">int</span> <span class="fn">decrementStock</span>(@Param(<span class="str">"id"</span>) Long id, @Param(<span class="str">"qty"</span>) <span class="kw">int</span> qty);`
  },
  {
   id:'l09', num:'#9', tier:'data', title:'Partitioning',
@@ -587,8 +530,7 @@ repo.<span class="fn">save</span>(p);  <span class="cm">// @Version throws on co
   );
 
 <span class="cm">-- Drop a year of data: ~1ms, no locks</span>
-<span class="kw">ALTER TABLE</span> orders <span class="kw">DROP PARTITION</span> p2023;`,
-  quote:'Purging 1M old orders with DELETE took 58 seconds and held locks. RANGE partitioning let us DROP PARTITION in under 1ms — the lock was gone entirely.'
+<span class="kw">ALTER TABLE</span> orders <span class="kw">DROP PARTITION</span> p2023;`
  },
  {
   id:'l10', num:'#10', tier:'infra', title:'HPA Connection Bomb',
@@ -602,8 +544,7 @@ repo.<span class="fn">save</span>(p);  <span class="cm">// @Version throws on co
          'Break it: set maxReplicas=20 in hpa.yml — 20 × 10 = 200 = max_connections',
          'Fix: add ProxySQL — pods connect to proxy, proxy holds 20 DB connections regardless of pods'],
   bad: null, good: null,
-  fix: `<span class="cm">// The formula every interviewer wants to hear:</span>
-<span class="cm">// pods × pool_size < max_connections</span>
+  fix: `<span class="cm">// Formula: pods × pool_size < max_connections</span>
 <span class="cm">// safe_pool = (max_connections - admin_connections)</span>
 <span class="cm">//             / expected_max_pods</span>
 
@@ -611,8 +552,7 @@ repo.<span class="fn">save</span>(p);  <span class="cm">// @Version throws on co
 maxReplicas: <span class="num">10</span>   <span class="cm"># 10 × 5 pool = 50 < max_connections=200</span>
 
 <span class="cm"># With ProxySQL — decouple pod count from DB connections</span>
-<span class="cm"># 100 pods × 10 pool → ProxySQL → 20 real MySQL connections</span>`,
-  quote:'HPA scaled to 8 pods × 10 pool = 80 connections. One more scale event would have been 16 × 10 = 160, approaching max_connections=200. ProxySQL decoupled pod count from DB connections.'
+<span class="cm"># 100 pods × 10 pool → ProxySQL → 20 real MySQL connections</span>`
  },
  {
   id:'l11', num:'#11', tier:'data', title:'Async Writes',
@@ -639,8 +579,7 @@ kafkaTemplate.<span class="fn">send</span>(<span class="str">"orders.created"</s
 
 <span class="cm">// @KafkaListener consumer:</span>
 <span class="ann">@KafkaListener</span>(topics = <span class="str">"orders.created"</span>)
-<span class="kw">public void</span> <span class="fn">consume</span>(String json) { <span class="cm">/* persist to DB */</span> }`,
-  quote:'Under write spikes, synchronous DB writes caused p99 to hit 2 seconds. Publishing to Kafka returned in under 5ms. The outbox consumer processed the backlog at a steady rate.'
+<span class="kw">public void</span> <span class="fn">consume</span>(String json) { <span class="cm">/* persist to DB */</span> }`
  }
 ];
 
@@ -802,10 +741,6 @@ function buildLab(lab) {
       <div class="cb-bd"><div class="cl"><span class="ps">$</span>${lab.k6b}</div></div></div>
       <div class="cb" style="margin-top:8px"><div class="cb-hd">✅ After fix</div>
       <div class="cb-bd"><div class="cl"><span class="ps">$</span>${lab.k6g}</div></div></div>
-    </div>
-    <div class="iq">
-      <div class="tag">Interview quote</div>
-      <p>"${lab.quote}"</p>
     </div>`;
   document.querySelector('.main').appendChild(el);
 }

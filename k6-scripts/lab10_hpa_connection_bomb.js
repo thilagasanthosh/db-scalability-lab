@@ -1,8 +1,6 @@
 /**
  * LAB #10: The HPA connection bomb
  *
- * This is the BEST interview story in the lab.
- *
  * Scenario:
  *   You scale Spring Boot from 1 pod to 10 pods with HPA.
  *   Each pod has HikariCP maximum-pool-size=10.
@@ -16,7 +14,7 @@
  *   hikaricp_connections_active{pool="PrimaryPool"}  — per pod
  *   mysql_global_status_threads_connected            — total DB connections
  *
- * Fix options (discuss in interview):
+ * Fix options:
  *   1. Shrink pool per pod: max_pool = (max_connections / expected_pods) - 5
  *   2. Add ProxySQL or RDS Proxy — pods connect to proxy, proxy maintains
  *      a smaller persistent pool to MySQL.
